@@ -14,6 +14,7 @@
     GripVertical,
     X,
     Pencil,
+    Loader2,
   } from "@lucide/svelte";
   import type { Group, Tab, AuthState } from "$lib/types";
   import {
@@ -34,6 +35,7 @@
   let groups = $state<Group[]>([]);
   let expandedGroups = $state<Set<string>>(new Set());
   let loading = $state(false);
+  let authChecking = $state(true);
   let syncing = $state(false);
   let settings = $state({ gistId: undefined });
   let authState = $state<AuthState>({
@@ -65,24 +67,26 @@
   $effect(() => {
     let unsubscribe: (() => void) | null = null;
     let storageListener: ((changes: chrome.storage.StorageChange, areaName: string) => void) | null = null;
-    
-    // Restore auth state first, then load data and subscribe to changes
+
     (async () => {
-      await restoreAuthState();
-      loadData();
-      // Subscribe to auth state changes after restore
-      unsubscribe = onAuthStateChange((state: AuthState) => {
-        authState = state;
-      });
-      // Listen for storage changes
-      storageListener = (changes, areaName) => {
-        if (areaName === "local") {
-          loadData();
-        }
-      };
-      chrome.storage.onChanged.addListener(storageListener);
+      authChecking = true;
+      try {
+        await restoreAuthState();
+        await loadData();
+        unsubscribe = onAuthStateChange((state: AuthState) => {
+          authState = state;
+        });
+        storageListener = (changes, areaName) => {
+          if (areaName === "local") {
+            loadData();
+          }
+        };
+        chrome.storage.onChanged.addListener(storageListener);
+      } finally {
+        authChecking = false;
+      }
     })();
-    
+
     return () => {
       if (unsubscribe) {
         unsubscribe();
@@ -419,6 +423,13 @@
 
 <div class="min-h-screen bg-background p-6">
   <div class="max-w-4xl mx-auto space-y-6">
+    {#if authChecking}
+      <div class="flex items-center gap-2 rounded-md border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+        <Loader2 class="size-4 shrink-0 animate-spin" />
+        Đang kiểm tra đăng nhập…
+      </div>
+    {/if}
+
     <!-- Header -->
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-3">
@@ -440,11 +451,11 @@
           Settings
         </Button>
         {#if authState.isSignedIn}
-          <Button variant="outline" onclick={handleSyncFromGist} disabled={syncing}>
+          <Button variant="outline" onclick={handleSyncFromGist} disabled={syncing || authChecking}>
             <RefreshCw class="size-4 mr-2" />
             Sync từ Gist
           </Button>
-          <Button variant="default" onclick={handleSyncToGist} disabled={syncing}>
+          <Button variant="default" onclick={handleSyncToGist} disabled={syncing || authChecking}>
             <RefreshCw class="size-4 mr-2" />
             Sync lên Gist
           </Button>

@@ -4,8 +4,8 @@
   import { Switch } from "$lib/components/ui/switch";
   import { Label } from "$lib/components/ui/label";
   import { Separator } from "$lib/components/ui/separator";
-  import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
-  import { ChevronDown, FolderOpen, Settings as SettingsIcon, AlertCircle, X } from "@lucide/svelte";
+  import { DropdownMenuMulti } from "$lib/components/ui/dropdown-menu";
+  import { FolderOpen, Settings as SettingsIcon, AlertCircle, X, Loader2 } from "@lucide/svelte";
   import * as Alert from "$lib/components/ui/alert";
   import type { Group, Settings, AuthState } from "$lib/types";
   import { getGroups, getSettings, saveSettings, addTabsToGroup } from "$lib/services/storage";
@@ -17,8 +17,9 @@
   let settings = $state<Settings>({ closeAndSave: false });
   let tabCount = $state(0);
   let loading = $state(false);
-  let selectedGroupForCurrent = $state<string>("default");
-  let selectedGroupForAll = $state<string>("default");
+  let authChecking = $state(true);
+  let selectedGroupIdsForCurrent = $state<string[]>(["default"]);
+  let selectedGroupIdsForAll = $state<string[]>(["default"]);
   let errorMessage = $state<string | null>(null);
   let authState = $state<AuthState>({
     isSignedIn: false,
@@ -32,19 +33,22 @@
     chrome.tabs.query({}, (tabs) => {
       tabCount = tabs.length;
     });
-    
+
     let unsubscribe: (() => void) | null = null;
-    
-    // Restore auth state first, then load data and subscribe to changes
+
     (async () => {
-      await restoreAuthState();
-      loadData();
-      // Subscribe to auth state changes after restore
-      unsubscribe = onAuthStateChange((state) => {
-        authState = state;
-      });
+      authChecking = true;
+      try {
+        await restoreAuthState();
+        await loadData();
+        unsubscribe = onAuthStateChange((state) => {
+          authState = state;
+        });
+      } finally {
+        authChecking = false;
+      }
     })();
-    
+
     return () => {
       if (unsubscribe) {
         unsubscribe();
@@ -55,14 +59,7 @@
   async function loadData() {
     groups = await getGroups();
     settings = await getSettings();
-    // Get current auth state
     authState = getAuthState();
-    // Set default group if exists
-    const defaultGroup = groups.find((g) => g.id === "default");
-    if (defaultGroup) {
-      selectedGroupForCurrent = "default";
-      selectedGroupForAll = "default";
-    }
   }
 
   async function handleCloseAndSaveChange(checked: boolean) {
@@ -93,6 +90,7 @@
       }
     }
 
+    const groupIds = selectedGroupIdsForCurrent.length ? selectedGroupIdsForCurrent : ["default"];
     loading = true;
     try {
       const chromeTab = await getCurrentTab();
@@ -101,7 +99,9 @@
       }
 
       const tab = chromeTabToTab(chromeTab);
-      await addTabsToGroup(selectedGroupForCurrent, [tab]);
+      for (const groupId of groupIds) {
+        await addTabsToGroup(groupId, [tab]);
+      }
 
       // Close tab if setting is enabled
       if (settings.closeAndSave && chromeTab.id) {
@@ -149,13 +149,16 @@
       }
     }
 
+    const groupIds = selectedGroupIdsForAll.length ? selectedGroupIdsForAll : ["default"];
     loading = true;
     try {
       const chromeTabs = await getAllTabs();
       const tabs = chromeTabs.map(chromeTabToTab);
       const tabIds = chromeTabs.map((t) => t.id!).filter((id): id is number => id !== undefined);
 
-      await addTabsToGroup(selectedGroupForAll, tabs);
+      for (const groupId of groupIds) {
+        await addTabsToGroup(groupId, tabs);
+      }
 
       // Close tabs if setting is enabled
       if (settings.closeAndSave && tabIds.length > 0) {
@@ -256,17 +259,13 @@
             >
               Lưu tab hiện tại
             </Button>
-            <DropdownMenu
+            <DropdownMenuMulti
               items={groupDropdownItems}
-              selectedId={selectedGroupForCurrent}
-              onSelect={(id) => {
-                selectedGroupForCurrent = id;
+              selectedIds={selectedGroupIdsForCurrent}
+              onChange={(ids: string[]) => {
+                selectedGroupIdsForCurrent = ids;
               }}
-            >
-              <Button size="icon" variant="outline" title={groups.find((g) => g.id === selectedGroupForCurrent)?.name || "Chọn group"}>
-                <ChevronDown class="size-4" />
-              </Button>
-            </DropdownMenu>
+            />
           </div>
 
           <!-- Save All Tabs -->
@@ -279,17 +278,13 @@
             >
               Lưu tất cả
             </Button>
-            <DropdownMenu
+            <DropdownMenuMulti
               items={groupDropdownItems}
-              selectedId={selectedGroupForAll}
-              onSelect={(id) => {
-                selectedGroupForAll = id;
+              selectedIds={selectedGroupIdsForAll}
+              onChange={(ids: string[]) => {
+                selectedGroupIdsForAll = ids;
               }}
-            >
-              <Button size="icon" variant="outline" title={groups.find((g) => g.id === selectedGroupForAll)?.name || "Chọn group"}>
-                <ChevronDown class="size-4" />
-              </Button>
-            </DropdownMenu>
+            />
           </div>
 
           <Separator />
@@ -318,28 +313,23 @@
             Cấu hình
           </Button>
         </div>
-        {#if settings.closeAndSave && !authState.isSignedIn}
-          <Card.Description class="text-destructive">
-            ⚠️ Cần đăng nhập với GitHub (OAuth) để sử dụng tính năng "Đóng và lưu"
+        {#if authChecking}
+          <Card.Description class="flex items-center gap-2 text-muted-foreground">
+            <Loader2 class="size-4 animate-spin shrink-0" />
+            Đang kiểm tra đăng nhập…
           </Card.Description>
-        {:else}
-          <Card.Description>Cài đặt chung của extension</Card.Description>
         {/if}
       </Card.Header>
       <Card.Content>
         <div class="flex items-center justify-between">
           <div class="space-y-0.5">
             <Label for="close-and-save">Đóng và lưu</Label>
-            {#if settings.closeAndSave && !authState.isSignedIn}
-              <p class="text-xs text-destructive">
-                Cần đăng nhập với GitHub (OAuth) để đồng bộ dữ liệu
-              </p>
-            {/if}
           </div>
           <Switch
             id="close-and-save"
             checked={settings.closeAndSave}
             onCheckedChange={handleCloseAndSaveChange}
+            disabled={authChecking}
           />
         </div>
       </Card.Content>

@@ -4,11 +4,12 @@
   interface Props {
     class?: string;
     children?: any;
+    [key: string]: unknown;
   }
 
-  let { class: className = "", children }: Props = $props();
+  let { class: className = "", children, ...rest }: Props = $props();
 </script>
 
-<div class={cn("p-6 pt-0", className)}>
+<div class={cn("p-6 pt-0", className)} {...rest}>
   {@render children?.()}
 </div>

@@ -17,10 +17,6 @@ export default defineManifest({
   background: {
     service_worker: 'src/background.ts',
   },
-  content_scripts: [{
-    js: ['src/content/main.ts'],
-    matches: ['https://*/*'],
-  }],
   permissions: [
     'sidePanel',
     'contentSettings',
