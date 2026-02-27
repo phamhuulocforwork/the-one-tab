@@ -227,6 +227,40 @@ export async function moveTabBetweenGroups(
   await saveStorageData(data);
 }
 
+export async function updateTabInGroup(
+  groupId: string,
+  tabId: string,
+  updates: { title?: string; url?: string; favIconUrl?: string }
+): Promise<void> {
+  const data = await getStorageData();
+  const group = findGroupById(data.groups, groupId);
+
+  if (!group) {
+    throw new Error(`Group ${groupId} not found`);
+  }
+
+  const tab = group.tabs.find((t) => t.id === tabId);
+
+  if (!tab) {
+    throw new Error(`Tab ${tabId} not found in group ${groupId}`);
+  }
+
+  if (updates.title !== undefined) {
+    tab.title = updates.title;
+  }
+
+  if (updates.url !== undefined) {
+    tab.url = updates.url;
+  }
+
+  if (updates.favIconUrl !== undefined) {
+    tab.favIconUrl = updates.favIconUrl;
+  }
+
+  group.updatedAt = Date.now();
+  await saveStorageData(data);
+}
+
 export async function createGroup(name: string, description?: string): Promise<Group> {
   if (!name || name.trim() === "") {
     throw new Error("Group name cannot be empty");

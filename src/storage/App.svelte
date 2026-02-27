@@ -25,6 +25,7 @@
     moveTabBetweenGroups,
     createGroup,
     reorderTabsInGroup,
+    updateTabInGroup,
   } from "$lib/services/storage";
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
@@ -63,6 +64,14 @@
   let editGroupName = $state("");
   let editGroupDescription = $state("");
   let updatingGroup = $state(false);
+
+  // Edit tab dialog state
+  let showEditTabDialog = $state(false);
+  let editingTab = $state<Tab | null>(null);
+  let editingGroupId = $state<string | null>(null);
+  let editTabTitle = $state("");
+  let editTabUrl = $state("");
+  let updatingTab = $state(false);
 
   $effect(() => {
     let unsubscribe: (() => void) | null = null;
@@ -419,6 +428,59 @@
       updatingGroup = false;
     }
   }
+
+  function handleOpenEditTabDialog(groupId: string, tab: Tab) {
+    editingGroupId = groupId;
+    editingTab = tab;
+    editTabTitle = tab.title;
+    editTabUrl = tab.url;
+    showEditTabDialog = true;
+  }
+
+  function handleCloseEditTabDialog() {
+    showEditTabDialog = false;
+    editingGroupId = null;
+    editingTab = null;
+    editTabTitle = "";
+    editTabUrl = "";
+    updatingTab = false;
+  }
+
+  async function handleUpdateTab() {
+    if (!editingGroupId || !editingTab) {
+      return;
+    }
+
+    const title = editTabTitle.trim();
+    const url = editTabUrl.trim();
+
+    if (!title || !url) {
+      alert("Vui lòng nhập đầy đủ tiêu đề và URL");
+      return;
+    }
+
+    try {
+      // Basic URL validation
+      // eslint-disable-next-line no-new
+      new URL(url);
+    } catch {
+      alert("URL không hợp lệ. Vui lòng kiểm tra lại.");
+      return;
+    }
+
+    updatingTab = true;
+
+    try {
+      await updateTabInGroup(editingGroupId, editingTab.id, { title, url });
+      await loadData();
+      handleCloseEditTabDialog();
+    } catch (error) {
+      console.error("Error updating tab:", error);
+      alert("Lỗi khi cập nhật tab: " + (error as Error).message);
+    } finally {
+      updatingTab = false;
+    }
+  }
 </script>
 
 <div class="min-h-screen bg-background p-6">
@@ -478,19 +540,23 @@
       <div class="space-y-4">
         {#each groups as group, index (group.id)}
           <Card.Root
-            draggable={group.id !== "default"}
-            ondragstart={(e: DragEvent) => handleGroupDragStart(e, index)}
-            ondragend={handleGroupDragEnd}
             ondragover={(e: DragEvent) => handleGroupDragOver(e, index)}
             ondragleave={handleGroupDragLeave}
             ondrop={(e: DragEvent) => handleGroupDrop(e, index)}
-            class="transition-all {dragOverGroupId === group.id && draggedGroupIndex !== null ? 'ring-2 ring-primary' : ''} {draggedGroupIndex === index ? 'opacity-50' : ''}"
+            class="transition-all duration-200 {dragOverGroupId === group.id && draggedGroupIndex !== null ? 'ring-2 ring-primary bg-primary/5' : ''} {draggedGroupIndex === index ? 'opacity-50' : ''}"
           >
             <Card.Header class="group">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2 flex-1">
                   {#if group.id !== "default"}
-                    <div class="cursor-grab text-muted-foreground hover:text-foreground">
+                    <div
+                      class="cursor-grab text-muted-foreground hover:text-foreground"
+                      role="button"
+                      aria-grabbed={draggedGroupIndex === index}
+                      draggable={group.id !== "default"}
+                      ondragstart={(e: DragEvent) => handleGroupDragStart(e, index)}
+                      ondragend={handleGroupDragEnd}
+                    >
                       <GripVertical class="size-4" />
                     </div>
                   {/if}
@@ -550,15 +616,12 @@
                   <div class="space-y-2">
                     {#each group.tabs as tab, tabIndex (tab.id)}
                       <div
-                        draggable="true"
-                        ondragstart={(e: DragEvent) => handleTabDragStart(e, tab, group.id, tabIndex)}
-                        ondragend={handleTabDragEnd}
                         ondragover={(e: DragEvent) => handleTabDragOver(e, group.id, tabIndex)}
                         ondragleave={handleTabDragLeave}
                         ondrop={(e: DragEvent) => handleTabDrop(e, group.id, tabIndex)}
                         role="button"
                         tabindex="0"
-                        class="flex items-center gap-3 p-3 rounded-md border hover:bg-accent/50 transition-colors cursor-pointer group {draggedTab?.id === tab.id ? 'opacity-50' : ''} {dragOverTabIndex === tabIndex && draggedTab?.groupId === group.id ? 'border-primary border-2 bg-primary/10' : ''}"
+                        class="flex items-center gap-3 p-3 rounded-md border hover:bg-accent/50 transition-colors duration-200 cursor-pointer group {draggedTab?.id === tab.id ? 'opacity-60 border-dashed' : ''} {dragOverTabIndex === tabIndex && draggedTab?.groupId === group.id ? 'border-primary border-2 border-l-4 border-l-primary bg-primary/10' : ''}"
                         onclick={() => handleOpenTab(tab)}
                         onkeydown={(e: KeyboardEvent) => {
                           if (e.key === "Enter" || e.key === " ") {
@@ -567,7 +630,14 @@
                           }
                         }}
                       >
-                        <div class="cursor-move text-muted-foreground hover:text-foreground">
+                        <div
+                          class="cursor-grab text-muted-foreground hover:text-foreground"
+                          role="button"
+                          aria-grabbed={draggedTab?.id === tab.id}
+                          draggable="true"
+                          ondragstart={(e: DragEvent) => handleTabDragStart(e, tab, group.id, tabIndex)}
+                          ondragend={handleTabDragEnd}
+                        >
                           <GripVertical class="size-4" />
                         </div>
                         {#if tab.favIconUrl}
@@ -587,6 +657,16 @@
                           <p class="text-xs text-muted-foreground truncate">{tab.url}</p>
                         </div>
                         <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            onclick={(e: MouseEvent) => {
+                              e.stopPropagation();
+                              handleOpenEditTabDialog(group.id, tab);
+                            }}
+                          >
+                            <Pencil class="size-3" />
+                          </Button>
                           <Button
                             size="icon-sm"
                             variant="ghost"
@@ -759,6 +839,79 @@
                   Đang cập nhật...
                 {:else}
                   Cập nhật
+                {/if}
+              </Button>
+            </div>
+          </Card.Content>
+        </Card.Root>
+      </div>
+    {/if}
+
+    <!-- Edit Tab Dialog -->
+    {#if showEditTabDialog && editingTab && editingGroupId}
+      <div 
+        class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+        onclick={(e: MouseEvent) => {
+          if (e.target === e.currentTarget) {
+            handleCloseEditTabDialog();
+          }
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-tab-title"
+      >
+        <Card.Root class="w-full max-w-md m-4" onclick={(e: MouseEvent) => e.stopPropagation()}>
+          <Card.Header>
+            <div class="flex items-center justify-between">
+              <Card.Title id="edit-tab-title">Chỉnh sửa tab</Card.Title>
+              <button
+                type="button"
+                onclick={handleCloseEditTabDialog}
+                class="p-1 hover:bg-accent rounded"
+              >
+                <X class="size-4" />
+              </button>
+            </div>
+          </Card.Header>
+          <Card.Content class="space-y-4">
+            <div class="space-y-2">
+              <Label for="edit-tab-title-input">Tiêu đề *</Label>
+              <Input
+                id="edit-tab-title-input"
+                type="text"
+                placeholder="Nhập tiêu đề tab"
+                bind:value={editTabTitle}
+                onkeydown={(e: KeyboardEvent) => {
+                  if (e.key === "Enter") {
+                    handleUpdateTab();
+                  }
+                }}
+                autofocus
+              />
+            </div>
+            <div class="space-y-2">
+              <Label for="edit-tab-url-input">URL *</Label>
+              <Input
+                id="edit-tab-url-input"
+                type="url"
+                placeholder="https://example.com"
+                bind:value={editTabUrl}
+                onkeydown={(e: KeyboardEvent) => {
+                  if (e.key === "Enter") {
+                    handleUpdateTab();
+                  }
+                }}
+              />
+            </div>
+            <div class="flex gap-2 justify-end">
+              <Button variant="outline" onclick={handleCloseEditTabDialog} disabled={updatingTab}>
+                Hủy
+              </Button>
+              <Button onclick={handleUpdateTab} disabled={updatingTab || !editTabTitle.trim() || !editTabUrl.trim()}>
+                {#if updatingTab}
+                  Đang lưu...
+                {:else}
+                  Lưu
                 {/if}
               </Button>
             </div>
